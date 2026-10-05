@@ -1,4 +1,4 @@
-name: Build & Release Standalone Executables
+name: Build Standalone Windows Executable
 
 on:
   push:
@@ -6,36 +6,18 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [main]
-  release:
-    types: [published]
   workflow_dispatch:
-    inputs:
-      tag_name:
-        description: "Release tag (e.g. v1.0.0). Leave blank to test build without releasing."
-        required: false
-        type: string
-        default: ""
 
 permissions:
   contents: write
 
 jobs:
   build:
-    name: Build (${{ matrix.platform }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            platform: linux
-            archive_name: FemurXpert-linux-x86_64.tar.gz
-          - os: windows-latest
-            platform: windows
-            archive_name: FemurXpert-windows-x86_64.zip
+    name: Build (Windows)
+    runs-on: windows-latest
 
     steps:
-      - name: Checkout repository
+      - name: Check out repository
         uses: actions/checkout@v4
         with:
           lfs: true
@@ -46,138 +28,71 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
+      - name: Verify ONNX model
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            patchelf \
-            ccache \
-            libgl1 \
-            libegl1 \
-            libglib2.0-0
+          if [ ! -s "best.onnx" ]; then
+            echo "::error::'best.onnx' is missing or uncommitted (check .gitignore or Git LFS)."
+            exit 1
+          fi
+          size=$(wc -c < best.onnx)
+          if [ "$size" -lt 1000000 ]; then
+            echo "::error::'best.onnx' is only $size bytes. Ensure Git LFS pulled the actual weights."
+            exit 1
+          fi
 
       - name: Install Python dependencies
+        shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt zstandard ordered-set
+          pip install -r requirements.txt
+          pip install nuitka zstandard ordered-set
 
-      - name: Validate runtime assets & Git LFS integrity
-        shell: python
-        run: |
-          import sys
-          from pathlib import Path
-
-          required_assets = ["best.onnx", "app.ico"]
-          errors = []
-
-          for name in required_assets:
-              p = Path(name)
-              if not p.is_file():
-                  errors.append(f"Missing asset: '{name}' was not found in the repository root.")
-                  continue
-
-              size = p.stat().st_size
-              if size == 0:
-                  errors.append(f"Empty asset: '{name}' is 0 bytes.")
-                  continue
-
-              with open(p, "rb") as f:
-                  header = f.read(200)
-
-              if b"version https://git-lfs.github.com/spec/v1" in header:
-                  errors.append(
-                      f"Unresolved Git LFS pointer: '{name}' is an LFS pointer ({size} bytes). "
-                      "Ensure Git LFS is checked out."
-                  )
-                  continue
-
-              if name.endswith(".onnx") and size < 1024 * 1024:
-                  errors.append(
-                      f"Invalid model size: '{name}' is suspiciously small ({size} bytes, expected > 1 MB)."
-                  )
-
-          if errors:
-              for err in errors:
-                  print(f"::error::{err}")
-              sys.exit(1)
-
-          print("All required assets (best.onnx, app.ico) validated successfully.")
-
-      - name: Compile with Nuitka (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          python -m nuitka \
-            --assume-yes-for-downloads \
-            --include-data-files=best.onnx=best.onnx \
-            --include-data-files=app.ico=app.ico \
-            --nofollow-import-to=torch,sympy \
-            --output-dir=dist \
-            femurxpert.py
-
-      - name: Compile with Nuitka (Windows)
-        if: runner.os == 'Windows'
+      - name: Compile with Nuitka (Windows Onefile)
         shell: pwsh
         run: |
-          python -m nuitka `
-            --assume-yes-for-downloads `
-            --include-data-files=best.onnx=best.onnx `
-            --include-data-files=app.ico=app.ico `
-            --nofollow-import-to=torch,sympy `
-            --output-dir=dist `
-            femurxpert.py
-
-      - name: Package distribution (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          DIST_DIR=$(find dist -maxdepth 1 -type d -name "*.dist" | head -n 1)
-          if [ -n "$DIST_DIR" ] && [ "$DIST_DIR" != "dist/FemurXpert" ]; then
-            mv "$DIST_DIR" dist/FemurXpert
-          fi
-          chmod +x dist/FemurXpert/FemurXpert
-          tar -czf ${{ matrix.archive_name }} -C dist FemurXpert
-
-      - name: Package distribution & Embed PE model (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $distDir = Get-ChildItem -Path dist -Directory -Filter "*.dist" | Select-Object -First 1
-          if ($distDir -and$distDir.Name -ne "FemurXpert") {
-            Rename-Item -Path $distDir.FullName -NewName "FemurXpert"
+          $extraFlags = @()
+          if (Test-Path "app.ico") {
+            $extraFlags += "--include-data-files=app.ico=app.ico"
+            $extraFlags += "--windows-icon-from-ico=app.ico"
           }
-          python femurxpert.py --embed dist/FemurXpert/FemurXpert.exe best.onnx
-          Compress-Archive -Path "dist/FemurXpert" -DestinationPath "${{ matrix.archive_name }}" -Force
+
+          python -m nuitka `
+            --onefile `
+            --enable-plugin=pyside6 `
+            --include-package-data=onnxruntime `
+            --include-package=cv2 `
+            --include-data-files=best.onnx=best.onnx `
+            --nofollow-import-to=torch,sympy `
+            --low-memory `
+            --windows-console-mode=disable `
+            --assume-yes-for-downloads `
+            --output-dir=dist `
+            --output-filename=FemurXpert.exe `
+            @extraFlags `
+            femurxpert.py
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.archive_name }}
-          path: ${{ matrix.archive_name }}
+          name: FemurXpert.exe
+          path: dist/FemurXpert.exe
           retention-days: 7
-          if-no-files-found: error
 
   release:
-    name: GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.tag_name != '')
+    name: Publish Release
     needs: build
-    runs-on: ubuntu-24.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
     steps:
-      - name: Download all build artifacts
+      - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
-          merge-multiple: true
+          name: FemurXpert.exe
+          path: release_assets
 
-      - name: Generate SHA-256 Checksums
-        working-directory: artifacts
-        run: |
-          sha256sum FemurXpert-* > SHA256SUMS.txt
-          cat SHA256SUMS.txt
-
-      - name: Publish GitHub Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag_name || github.event.release.tag_name || github.ref_name }}
-          files: artifacts/*
-          fail_on_unmatched_files: true
+          files: release_assets/FemurXpert.exe
           generate_release_notes: true
