@@ -41,7 +41,9 @@ FemurXpert is a standalone desktop workstation for detecting and segmenting prox
 ├── build.bat              # Windows Nuitka build script
 ├── build.sh               # Linux Nuitka build script
 ├── femurxpert.py          # Application entry point, UI, and inference engine
-├── requirements.txt       # Python dependencies
+├── pyproject.toml         # Project metadata and dependency specification (uv)
+├── uv.lock                # Locked dependency versions (uv)
+├── .python-version        # Python version used by the project
 └── README.md              # Project documentation
 ```
 
@@ -52,6 +54,8 @@ FemurXpert is a standalone desktop workstation for detecting and segmenting prox
 ### Prerequisites
 
 - Python 3.10+ (tested on Python 3.12)
+
+- [uv](https://docs.astral.sh/uv/) (Python package and environment manager)
 
 - Git LFS (for pulling `best.onnx`)
 
@@ -65,15 +69,8 @@ cd FemurXpert
 # Ensure LFS assets are downloaded
 git lfs pull
 
-# Create and activate a virtual environment
-python -m venv .venv
-# Linux:
-source .venv/bin/activate
-# Windows:
-.venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies (creates and manages the locked virtual environment via uv)
+uv sync
 ```
 
 ### Run from Source
@@ -81,7 +78,7 @@ pip install -r requirements.txt
 Place `best.onnx` and `app.ico` in the root directory alongside `femurxpert.py`:
 
 ```bash
-python femurxpert.py
+uv run python femurxpert.py
 ```
 
 ---
@@ -116,7 +113,7 @@ The compiled standalone executable is placed in `femurxpert.dist\FemurXpert.exe`
 Inject `best.onnx` directly into the compiled executable's Win32 resource section (`XRAYMODEL`/`MODEL`) using the built-in CLI command:
 
 ```cmd
-python femurxpert.py --embed femurxpert.dist\FemurXpert.exe best.onnx
+uv run python femurxpert.py --embed femurxpert.dist\FemurXpert.exe best.onnx
 ```
 
 ---

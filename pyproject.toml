@@ -1,0 +1,20 @@
+[project]
+name = "femurxpert"
+version = "0.1.0"
+description = "Standalone desktop workstation for detecting proximal femur fractures on plain radiographs."
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6>=6.6.0",
+    "onnxruntime>=1.18.0",
+    "onnxruntime-directml>=1.18.0; sys_platform == 'win32'",
+    "opencv-python>=4.9.0.80",
+    "numpy>=2.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "nuitka>=2.3.0",
+]
+
+[tool.uv]
+package = false
